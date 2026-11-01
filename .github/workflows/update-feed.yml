@@ -1,0 +1,38 @@
+name: Update VRC feed
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (lowest allowed is */5)
+  workflow_dispatch:          # lets you run it by hand
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vrc-feed
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests Pillow
+
+      - run: python update_feed.py
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+
+      - name: Commit only if something changed
+        run: |
+          git config user.name "feed-bot"
+          git config user.email "feed-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "update feed"
+          git push
