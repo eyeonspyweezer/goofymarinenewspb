@@ -189,7 +189,7 @@ def main():
         print("Nothing to write; leaving feed as is.")
         return
 
-    Path(FEED_FILE).write_text("\n".join(lines), encoding="utf-8")
+    Path(FEED_FILE).write_text("\n".join(reversed(lines)), encoding="utf-8")
     AV_DIR.mkdir(exist_ok=True)
     AV_INDEX.write_text(json.dumps(avatar_index, indent=1, sort_keys=True))
     print(f"Wrote {len(lines)} line(s).")
