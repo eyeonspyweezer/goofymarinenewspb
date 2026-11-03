@@ -1,6 +1,6 @@
 # render_maps.py  (put in the TOP folder of the opvrcinteractivemap repo)
 # Draws island boxes on TargetedMap.PNG for every button combo + every group.
-# Output: maps/<mask>.jpg  and  groups/<id>.jpg
+# Output: drawn/maps/<mask>.jpg, drawn/groups/<id>.jpg, islands/<id>.jpg
 # mask = 6 digits for M U O P R K (1 = shown, 0 = hidden)
 
 import csv, itertools
@@ -69,7 +69,7 @@ def render(items, dim=False):
 
 
 def save(img, path):
-    Path(path).parent.mkdir(exist_ok=True)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     img.save(path, "JPEG", quality=80)
 
 
@@ -85,7 +85,7 @@ for bits in itertools.product("01", repeat=6):
         c = next(x for x in ORDER if x in hit)
         col = hex_rgb(r["Color"].split()[0]) if c == "O" else COLORS[c]
         items.append((box(r), col))
-    save(render(items), f"maps/{mask}.jpg")
+    save(render(items), f"drawn/maps/{mask}.jpg")
 
 # 2) one image per group that owns islands
 for g in groups:
@@ -93,7 +93,7 @@ for g in groups:
     items = [(box(r), (0, 220, 255)) for r in islands
              if gid in (r["Group1"], r["Group2"], r["Group3"])]
     if items:
-        save(render(items, dim=True), f"groups/{gid}.jpg")
+        save(render(items, dim=True), f"drawn/groups/{gid}.jpg")
 
 # 3) one zoomed picture per island (for /island)
 def island_img(r):
