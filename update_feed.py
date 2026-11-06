@@ -6,6 +6,10 @@
 #   text   : real new lines are written as the two characters \n   ("|" is removed)
 #   extra  : poll / reaction info, plus EDITED and/or EVERYONE when they apply
 #
+# Also writes two files for the VRChat world into the folder  world/ :
+#   world/vrc-feed-world.txt : time|user|avatarCell|pictureCells|text|extra   (cells are numbers in the atlas)
+#   world/vrc-feed-atlas.jpg : ONE picture holding every avatar and picture (VRChat can only load fixed links)
+#
 # Extra channels: add one empty file per channel in the folder  channels/<channel id>.txt
 # Censor list  : put one word per line in  blocklist.txt  (optional)
 
@@ -24,6 +28,12 @@ FEED_FILE = "vrc-feed.txt"
 MAX_ITEMS = 15            # most announcements kept, newest first
 COMBINE_SECONDS = 300     # same person, same channel, within 5 min, no reactions -> one message
 THUMB_MAX = 512           # pictures are shrunk to at most this many pixels
+
+# VRChat atlas: 8 x 8 cells of 256 px = one 2048 x 2048 picture
+WORLD_DIR = Path("world")
+CELL = 256
+GRID = 8
+PICS_PER_SLOT = 2         # each announcement gets 1 avatar cell + up to 2 picture cells
 
 RAW = f"https://raw.githubusercontent.com/{REPO}/refs/heads/main"
 API = "https://discord.com/api/v10"
@@ -271,15 +281,75 @@ def group_line(g):
             if u not in images:
                 images.append(u)
     if not bodies:
-        return None
+        return None, None
 
-    extras = extra_of(last) if len(g) == 1 else []
-    if any(m.get("edited_timestamp") for m, _ in g):
+    single = len(g) == 1
+    extras = extra_of(last) if single else []
+    reactions = sum(r.get("count", 0) for r in last.get("reactions", [])) if single else 0
+    edited = any(m.get("edited_timestamp") for m, _ in g)
+    everyone = any(m.get("mention_everyone") for m, _ in g)
+    if edited:
         extras.append("EDITED")
-    if any(m.get("mention_everyone") for m, _ in g):
+    if everyone:
         extras.append("EVERYONE")
     joined = "\\n".join(bodies)
-    return "|".join([ts, name, avatar_url, " ".join(images), joined, "|".join(extras)])
+    line = "|".join([ts, name, avatar_url, " ".join(images), joined, "|".join(extras)])
+
+    # the same message for the VRChat world (cells instead of links)
+    wx = []
+    if single and last.get("poll"):
+        wx += [ascii_only(e) for e in extra_of(last)]
+    if reactions:
+        wx.append(f"REACTIONS:{reactions}")
+    if edited:
+        wx.append("EDITED")
+    if everyone:
+        wx.append("EVERYONE")
+    rec = {
+        "ts": ts, "name": name, "body": joined, "extra": "|".join(wx),
+        "avatar": AV_DIR / f"{user['id']}.png",
+        "pictures": [TH_DIR / u.rsplit("/", 1)[1] for u in images],
+    }
+    return line, rec
+
+
+# ---------- VRChat world files ----------
+
+def cover(img, size):
+    img = img.convert("RGB")
+    sc = max(size / img.width, size / img.height)
+    img = img.resize((max(1, round(img.width * sc)), max(1, round(img.height * sc))), Image.LANCZOS)
+    left, top = (img.width - size) // 2, (img.height - size) // 2
+    return img.crop((left, top, left + size, top + size))
+
+
+def build_world(records):
+    """records: newest first. Slot i uses cells 3i (avatar), 3i+1 and 3i+2 (pictures)."""
+    per = 1 + PICS_PER_SLOT
+    atlas = Image.new("RGB", (CELL * GRID, CELL * GRID), (32, 34, 37))
+
+    def put(path, cell):
+        try:
+            im = cover(Image.open(path), CELL)
+        except Exception as e:
+            print("atlas picture failed:", path, e)
+            return False
+        atlas.paste(im, ((cell % GRID) * CELL, (cell // GRID) * CELL))
+        return True
+
+    lines = []
+    for i, r in enumerate(records[: (GRID * GRID) // per]):
+        a = i * per
+        avatar = str(a) if put(r["avatar"], a) else "-1"
+        cells = []
+        for k, pth in enumerate(r["pictures"][:PICS_PER_SLOT]):
+            if put(pth, a + 1 + k):
+                cells.append(str(a + 1 + k))
+        lines.append("|".join([r["ts"], r["name"], avatar, " ".join(cells), r["body"], r["extra"]]))
+
+    WORLD_DIR.mkdir(exist_ok=True)
+    atlas.save(WORLD_DIR / "vrc-feed-atlas.jpg", "JPEG", quality=82)
+    (WORLD_DIR / "vrc-feed-world.txt").write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------- main ----------
@@ -312,17 +382,19 @@ def main():
         all_groups.extend(combine(items))
 
     all_groups.sort(key=lambda g: g[-1][0]["timestamp"])
-    lines = []
+    lines, records = [], []
     for g in all_groups[-MAX_ITEMS:]:
-        line = group_line(g)
+        line, rec = group_line(g)
         if line:
             lines.append(line)
+            records.append(rec)
 
     if not lines:
         print("Nothing to write; leaving feed as is.")
         return
 
     Path(FEED_FILE).write_text("\n".join(reversed(lines)), encoding="utf-8")
+    build_world(list(reversed(records)))
     AV_DIR.mkdir(exist_ok=True)
     AV_INDEX.write_text(json.dumps(avatar_index, indent=1, sort_keys=True))
     if thumb_index:
