@@ -46,6 +46,7 @@ TH_DIR = Path("thumbnails")
 AV_INDEX = AV_DIR / "index.json"
 TH_INDEX = TH_DIR / "index.json"
 CHANNELS_DIR = Path("channels")
+ANNOUNCEMENT_CHANNELS_FILE = Path("announcement_channels.txt")
 BLOCKLIST_FILE = Path("blocklist.txt")
 
 avatar_index = json.loads(AV_INDEX.read_text()) if AV_INDEX.exists() else {}
@@ -95,11 +96,23 @@ def censor(text):
 
 
 def channel_ids():
+    # The main channel is always included.
     ids = [CHANNEL_ID]
+
+    # Add channels listed in announcement_channels.txt (one ID per line).
+    # Blank lines and comments beginning with # are ignored.
+    if ANNOUNCEMENT_CHANNELS_FILE.exists():
+        for line in ANNOUNCEMENT_CHANNELS_FILE.read_text(encoding="utf-8").splitlines():
+            cid = line.split("#", 1)[0].strip()
+            if cid.isdigit() and cid not in ids:
+                ids.append(cid)
+
+    # Keep support for the older channels/<channel id>.txt method.
     if CHANNELS_DIR.exists():
         for f in sorted(CHANNELS_DIR.glob("*.txt")):
             if f.stem.isdigit() and f.stem not in ids:
                 ids.append(f.stem)
+
     return ids
 
 
