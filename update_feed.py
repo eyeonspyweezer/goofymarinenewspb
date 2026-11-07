@@ -335,9 +335,11 @@ def group_line(g):
         wx.append("EDITED")
     if everyone:
         wx.append("EVERYONE")
+    flagged_group = any(has_blocked_terms(text) for _, text in g)
     rec = {
         "ts": ts, "name": name, "body": joined, "extra": "|".join(wx),
-        "avatar": AV_DIR / f"{user['id']}.png",
+        # Hide the author's avatar too when the message contains blocked language.
+        "avatar": Path("__blocked_avatar__") if flagged_group else AV_DIR / f"{user['id']}.png",
         "pictures": [TH_DIR / u.rsplit("/", 1)[1] for u in images],
     }
     return line, rec
