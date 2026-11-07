@@ -381,6 +381,7 @@ def main():
         msgs.reverse()  # oldest -> newest
 
         items = []
+        combined_items = []
         channel_seen = set()
         for m in msgs:
             if m["author"]["id"] == me:
@@ -393,12 +394,12 @@ def main():
             if key not in channel_seen:
                 channel_seen.add(key)
                 items.append((m, text))
-            if key not in seen:  # preserve the existing combined root feed
+            if key not in seen:
                 seen.add(key)
-                # Keep combined-feed behavior: only the first matching text is included.
-        groups = combine(items)
-        per_channel_groups[cid] = groups
-        all_groups.extend(groups)
+                combined_items.append((m, text))
+
+        per_channel_groups[cid] = combine(items)
+        all_groups.extend(combine(combined_items))
 
     # Main channel alone goes in world/. Every other channel gets its own folder.
     for cid, groups in per_channel_groups.items():
