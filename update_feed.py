@@ -336,7 +336,7 @@ def cover(img, size):
     return img.crop((left, top, left + size, top + size))
 
 
-def build_world(records):
+def build_world(records, output_dir=WORLD_DIR):
     """records: newest first. Slot i uses cells 3i (avatar), 3i+1 and 3i+2 (pictures)."""
     per = 1 + PICS_PER_SLOT
     atlas = Image.new("RGB", (CELL * GRID, CELL * GRID), (32, 34, 37))
@@ -360,9 +360,9 @@ def build_world(records):
                 cells.append(str(a + 1 + k))
         lines.append("|".join([r["ts"], r["name"], avatar, " ".join(cells), r["body"], r["extra"]]))
 
-    WORLD_DIR.mkdir(exist_ok=True)
-    atlas.save(WORLD_DIR / "vrc-feed-atlas.jpg", "JPEG", quality=82)
-    (WORLD_DIR / "vrc-feed-world.txt").write_text("\n".join(lines), encoding="utf-8")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    atlas.save(output_dir / "vrc-feed-atlas.jpg", "JPEG", quality=82)
+    (output_dir / "vrc-feed-world.txt").write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------- main ----------
@@ -370,6 +370,7 @@ def build_world(records):
 def main():
     me = api("/users/@me")["id"]
     all_groups, seen = [], set()
+    per_channel_groups = {}
 
     for cid in channel_ids():
         try:
@@ -380,6 +381,7 @@ def main():
         msgs.reverse()  # oldest -> newest
 
         items = []
+        channel_seen = set()
         for m in msgs:
             if m["author"]["id"] == me:
                 continue
@@ -388,12 +390,30 @@ def main():
                 continue
             text = content_of(m)
             key = text.strip().lower()
-            if key in seen:  # skip repeated text
-                continue
-            seen.add(key)
-            items.append((m, text))
-        all_groups.extend(combine(items))
+            if key not in channel_seen:
+                channel_seen.add(key)
+                items.append((m, text))
+            if key not in seen:  # preserve the existing combined root feed
+                seen.add(key)
+                # Keep combined-feed behavior: only the first matching text is included.
+        groups = combine(items)
+        per_channel_groups[cid] = groups
+        all_groups.extend(groups)
 
+    # Main channel alone goes in world/. Every other channel gets its own folder.
+    for cid, groups in per_channel_groups.items():
+        groups.sort(key=lambda g: g[-1][0]["timestamp"])
+        records = []
+        for g in groups[-MAX_ITEMS:]:
+            _, rec = group_line(g)
+            if rec:
+                records.append(rec)
+        if records:
+            target = WORLD_DIR if cid == CHANNEL_ID else Path("channelids") / cid
+            build_world(list(reversed(records)), target)
+            print(f"Wrote channel {cid}: {len(records)} announcement(s).")
+
+    # Keep the original root feed as a combined feed for compatibility.
     all_groups.sort(key=lambda g: g[-1][0]["timestamp"])
     lines, records = [], []
     for g in all_groups[-MAX_ITEMS:]:
@@ -402,18 +422,17 @@ def main():
             lines.append(line)
             records.append(rec)
 
-    if not lines:
-        print("Nothing to write; leaving feed as is.")
-        return
+    if lines:
+        Path(FEED_FILE).write_text("\n".join(reversed(lines)), encoding="utf-8")
+        print(f"Wrote combined root feed: {len(lines)} line(s).")
+    else:
+        print("No announcements found.")
 
-    Path(FEED_FILE).write_text("\n".join(reversed(lines)), encoding="utf-8")
-    build_world(list(reversed(records)))
     AV_DIR.mkdir(exist_ok=True)
     AV_INDEX.write_text(json.dumps(avatar_index, indent=1, sort_keys=True))
     if thumb_index:
         TH_DIR.mkdir(exist_ok=True)
         TH_INDEX.write_text(json.dumps(thumb_index, indent=1, sort_keys=True))
-    print(f"Wrote {len(lines)} line(s).")
 
 
 if __name__ == "__main__":
