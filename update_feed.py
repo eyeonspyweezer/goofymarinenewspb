@@ -79,17 +79,31 @@ def parse_time(s):
 def load_blocklist():
     if not BLOCKLIST_FILE.exists():
         return None
-    words = [w.strip() for w in BLOCKLIST_FILE.read_text(encoding="utf-8").splitlines()
-             if w.strip() and not w.strip().startswith("#")]
+    words = []
+    for line in BLOCKLIST_FILE.read_text(encoding="utf-8").splitlines():
+        word = line.strip()
+        if word and not word.startswith("#"):
+            words.append(word)
+
+    # Match whole words/phrases only. Spaces inside phrases may be repeated.
     if not words:
         return None
-    return re.compile(r"(?<!\w)(" + "|".join(re.escape(w) for w in words) + r")(?!\w)", re.I)
+    patterns = []
+    for word in sorted(set(words), key=len, reverse=True):
+        parts = [re.escape(part) for part in word.split()]
+        patterns.append(r"\\s+".join(parts))
+    return re.compile(r"(?<![\\w])(?:" + "|".join(patterns) + r")(?![\\w])", re.I)
 
 
 BLOCK = load_blocklist()
 
 
+def has_blocked_terms(text):
+    return bool(BLOCK and BLOCK.search(str(text or "")))
+
+
 def censor(text):
+    text = str(text or "")
     if not BLOCK:
         return text
     return BLOCK.sub(lambda m: "*" * len(m.group(0)), text)
@@ -290,9 +304,12 @@ def group_line(g):
         b = body_of(m, text)
         if b and b != "[no text]":
             bodies.append(b)
-        for u in pick_images(m):
-            if u not in images:
-                images.append(u)
+        # If a message contains blocked language, do not carry its images
+        # into the VRChat atlas either. Text is retained with matched words masked.
+        if not has_blocked_terms(text):
+            for u in pick_images(m):
+                if u not in images:
+                    images.append(u)
     if not bodies:
         return None, None
 
