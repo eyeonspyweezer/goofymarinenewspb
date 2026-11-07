@@ -91,8 +91,8 @@ def load_blocklist():
     patterns = []
     for word in sorted(set(words), key=len, reverse=True):
         parts = [re.escape(part) for part in word.split()]
-        patterns.append(r"\\s+".join(parts))
-    return re.compile(r"(?<![\\w])(?:" + "|".join(patterns) + r")(?![\\w])", re.I)
+        patterns.append(r"\s+".join(parts))
+    return re.compile(r"(?<![\w])(?:" + "|".join(patterns) + r")(?![\w])", re.I)
 
 
 BLOCK = load_blocklist()
