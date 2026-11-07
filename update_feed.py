@@ -11,7 +11,7 @@
 #   world/vrc-feed-atlas.jpg : ONE picture holding every avatar and picture (VRChat can only load fixed links)
 #
 # Extra channels: add one empty file per channel in the folder  channels/<channel id>.txt
-# Censor list  : put one word per line in  blocklist.txt  (optional)
+# Censor list  : downloaded at run time from dsojevic/profanity-list (MIT)
 
 import os, re, json, hashlib, unicodedata
 from datetime import datetime, timezone
@@ -47,7 +47,7 @@ AV_INDEX = AV_DIR / "index.json"
 TH_INDEX = TH_DIR / "index.json"
 CHANNELS_DIR = Path("channels")
 ANNOUNCEMENT_CHANNELS_FILE = Path("announcement_channels.txt")
-BLOCKLIST_FILE = Path("blocklist.txt")
+BLOCKLIST_URL = "https://raw.githubusercontent.com/dsojevic/profanity-list/main/en.txt"
 
 avatar_index = json.loads(AV_INDEX.read_text()) if AV_INDEX.exists() else {}
 thumb_index = json.loads(TH_INDEX.read_text()) if TH_INDEX.exists() else {}
@@ -77,17 +77,21 @@ def parse_time(s):
 
 
 def load_blocklist():
-    if not BLOCKLIST_FILE.exists():
-        return None
+    # Third-party English list; fetched fresh on each workflow run.
+    # Source: dsojevic/profanity-list (MIT license).
+    response = requests.get(BLOCKLIST_URL, timeout=30)
+    response.raise_for_status()
+
     words = []
-    for line in BLOCKLIST_FILE.read_text(encoding="utf-8").splitlines():
+    for line in response.text.splitlines():
         word = line.strip()
         if word and not word.startswith("#"):
             words.append(word)
 
-    # Match whole words/phrases only. Spaces inside phrases may be repeated.
     if not words:
-        return None
+        raise RuntimeError("The external profanity list was empty; refusing to publish an unfiltered feed.")
+
+    # Match whole words/phrases only. Spaces inside phrases may be repeated.
     patterns = []
     for word in sorted(set(words), key=len, reverse=True):
         parts = [re.escape(part) for part in word.split()]
