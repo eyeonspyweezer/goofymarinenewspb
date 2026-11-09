@@ -396,6 +396,9 @@ def main():
     per_channel_groups = {}
 
     for cid in channel_ids():
+        # Keep an entry for every configured channel, even if Discord returns
+        # no messages or the bot cannot access that channel.
+        per_channel_groups[cid] = []
         try:
             msgs = api(f"/channels/{cid}/messages?limit=25")
         except Exception as e:
@@ -432,10 +435,11 @@ def main():
             _, rec = group_line(g)
             if rec:
                 records.append(rec)
-        if records:
-            target = WORLD_DIR if cid == CHANNEL_ID else Path("channelids") / cid
-            build_world(list(reversed(records)), target)
-            print(f"Wrote channel {cid}: {len(records)} announcement(s).")
+        target = WORLD_DIR if cid == CHANNEL_ID else Path("channelids") / cid
+        # Always create both files so every configured channel has stable URLs.
+        # Empty channels receive an empty text feed and a blank atlas image.
+        build_world(list(reversed(records)), target)
+        print(f"Wrote channel {cid}: {len(records)} announcement(s).")
 
     # Keep the original root feed as a combined feed for compatibility.
     all_groups.sort(key=lambda g: g[-1][0]["timestamp"])
