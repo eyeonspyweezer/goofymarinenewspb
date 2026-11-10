@@ -565,8 +565,27 @@ def update_complete_archive(channel_list):
         last_id = state.get(channel_id)
         try:
             messages = fetch_archive_messages(channel_id, last_id)
+            # The feed reader already proves this bot can read the channel. If the
+            # paginated archive request unexpectedly returns an empty page, retry
+            # the first page through the same API helper used by the live feed.
+            if not messages and not last_id:
+                print(f"Archive channel {channel_id}: archive page was empty; retrying first page.")
+                recent = api(f"/channels/{channel_id}/messages?limit=100")
+                if recent:
+                    messages = list(recent)
+                    before = str(min(int(m["id"]) for m in recent))
+                    while len(recent) == 100:
+                        recent = archive_api_messages(channel_id, {"before": before, "limit": 100})
+                        if not recent:
+                            break
+                        messages.extend(recent)
+                        next_before = str(min(int(m["id"]) for m in recent))
+                        if next_before == before or len(recent) < 100:
+                            break
+                        before = next_before
+                    messages = sorted({str(m["id"]): m for m in messages}.values(), key=lambda m: int(m["id"]))
             if not messages:
-                print(f"Archive channel {channel_id}: no new messages.")
+                print(f"Archive channel {channel_id}: no new messages (both archive and feed API requests were empty).")
                 continue
             channel_name = next(
                 (m.get("channel_id") for m in messages if m.get("channel_id")),
