@@ -497,21 +497,32 @@ def fetch_archive_messages(channel_id, last_id=None):
         page = archive_api_messages(channel_id, {"after": last_id, "limit": 100})
         collected.extend(page)
         if len(page) == 100:
-            oldest = min(int(m["id"]) for m in page)
-            while oldest > int(last_id):
-                page = archive_api_messages(
-                    channel_id, {"before": str(oldest), "limit": 100}
-                )
+            ascending = int(page[0]["id"]) < int(page[-1]["id"])
+            cursor = (
+                max(int(m["id"]) for m in page)
+                if ascending
+                else min(int(m["id"]) for m in page)
+            )
+            while True:
+                if ascending:
+                    page = archive_api_messages(
+                        channel_id, {"after": str(cursor), "limit": 100}
+                    )
+                else:
+                    page = archive_api_messages(
+                        channel_id, {"before": str(cursor), "limit": 100}
+                    )
                 if not page:
                     break
-                older = [m for m in page if int(m["id"]) > int(last_id)]
-                collected.extend(older)
-                next_oldest = min(int(m["id"]) for m in page)
-                if next_oldest >= oldest:
+                collected.extend(page)
+                next_cursor = (
+                    max(int(m["id"]) for m in page)
+                    if ascending
+                    else min(int(m["id"]) for m in page)
+                )
+                if next_cursor == cursor or len(page) < 100:
                     break
-                oldest = next_oldest
-                if len(page) < 100:
-                    break
+                cursor = next_cursor
         collected = [m for m in collected if int(m["id"]) > int(last_id)]
     else:
         before = None
