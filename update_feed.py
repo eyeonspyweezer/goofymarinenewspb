@@ -6,6 +6,7 @@
 #   text   : real new lines are written as the two characters \n   ("|" is removed)
 #   extra  : poll / reaction info, plus EDITED and/or EVERYONE when they apply
 #
+# Also maintains discord-archive.txt with all accessible messages from configured channels.
 # Also writes two files for the VRChat world into the folder  world/ :
 #   world/vrc-feed-world.txt : time|user|avatarCell|pictureCells|text|extra   (cells are numbers in the atlas)
 #   world/vrc-feed-atlas.jpg : ONE picture holding every avatar and picture (VRChat can only load fixed links)
@@ -565,7 +566,7 @@ def update_complete_archive(channel_list):
             "# Discord archive\n# Includes messages the bot can currently retrieve from configured channels.\n",
             encoding="utf-8",
         )
-    ARCHIVE_STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    ARCHIVE_STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def main():
