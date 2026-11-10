@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/10 * * * *"   # every 10 minutes (lowest allowed is */5)
   workflow_dispatch:          # lets you run it by hand
+  push:
+    paths:
+      - "update_feed.py"
+      - "announcement_channels.txt"
+      - ".github/workflows/update-feed.yml"
 
 permissions:
   contents: write
