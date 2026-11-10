@@ -465,8 +465,8 @@ def archive_message_text(message):
         reactions.append(f"{label}: {reaction.get('count', 0)}")
     if reactions:
         lines.append("Reactions: " + ", ".join(reactions))
-    lines.append(f"Message URL: https://discord.com/channels/{message.get('guild_id') or '@me'}/{message.get('channel_id') or ''}/{message_id}")
-    return "\\n".join(lines)
+    lines.append(f"Channel ID: {message.get('channel_id') or ''}")
+    return "\n".join(lines)
 
 
 def archive_api_messages(channel_id, params):
@@ -551,18 +551,18 @@ def update_complete_archive(channel_list):
                 (m.get("channel_id") for m in messages if m.get("channel_id")),
                 channel_id,
             )
-            additions.append(f"\\n\\n===== CHANNEL {channel_name} | collected {now} =====\\n")
-            additions.append("\\n\\n".join(archive_message_text(m) for m in messages))
+            additions.append(f"\n\n===== CHANNEL {channel_name} | collected {now} =====\n")
+            additions.append("\n\n".join(archive_message_text(m) for m in messages))
             state[channel_id] = max((str(m["id"]) for m in messages), key=int)
             print(f"Archive channel {channel_id}: added {len(messages)} message(s).")
         except Exception as error:
             print(f"Archive channel {channel_id} failed; cursor unchanged: {error}")
 
     if additions:
-        ARCHIVE_FILE.write_text(existing + "".join(additions) + "\\n", encoding="utf-8")
+        ARCHIVE_FILE.write_text(existing + "".join(additions) + "\n", encoding="utf-8")
     elif not ARCHIVE_FILE.exists():
         ARCHIVE_FILE.write_text(
-            "# Discord archive\\n# Includes messages the bot can currently retrieve from configured channels.\\n",
+            "# Discord archive\n# Includes messages the bot can currently retrieve from configured channels.\n",
             encoding="utf-8",
         )
     ARCHIVE_STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
