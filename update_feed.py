@@ -13,7 +13,7 @@
 # Extra channels: add one empty file per channel in the folder  channels/<channel id>.txt
 # Censor list  : downloaded at run time from dsojevic/profanity-list (MIT)
 
-import os, re, json, hashlib, unicodedata
+import os, re, json, hashlib, unicodedata, time
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -50,6 +50,8 @@ AV_INDEX = AV_DIR / "index.json"
 TH_INDEX = TH_DIR / "index.json"
 CHANNELS_DIR = Path("channels")
 ANNOUNCEMENT_CHANNELS_FILE = Path("announcement_channels.txt")
+ARCHIVE_FILE = Path("discord-archive.txt")
+ARCHIVE_STATE_FILE = Path("discord-archive-state.json")
 BLOCKLIST_URL = "https://raw.githubusercontent.com/dsojevic/profanity-list/main/en.txt"
 
 avatar_index = json.loads(AV_INDEX.read_text()) if AV_INDEX.exists() else {}
@@ -425,10 +427,153 @@ def build_world(records, output_dir=WORLD_DIR):
 
 # ---------- main ----------
 
+
+# ---------- complete Discord text archive ----------
+
+def archive_message_text(message):
+    """Render a retrieved Discord message without feed combining or censoring."""
+    author = message.get("author") or {}
+    display = author.get("global_name") or author.get("username") or "Unknown"
+    stamp = message.get("timestamp") or ""
+    message_id = str(message.get("id") or "")
+    lines = [f"[{stamp}] {display} (message {message_id})"]
+    content = (message.get("content") or "").strip()
+    if content:
+        lines.append(content)
+    for attachment in message.get("attachments") or []:
+        filename = attachment.get("filename") or "attachment"
+        url = attachment.get("url") or attachment.get("proxy_url") or ""
+        lines.append(f"Attachment: {filename}" + (f" — {url}" if url else ""))
+    for embed in message.get("embeds") or []:
+        title = (embed.get("title") or "").strip()
+        description = (embed.get("description") or "").strip()
+        url = (embed.get("url") or "").strip()
+        if title or description or url:
+            lines.append("Embed: " + " | ".join(x for x in (title, description, url) if x))
+    poll = message.get("poll") or {}
+    question = (poll.get("question") or {}).get("text") or ""
+    if question:
+        lines.append("Poll: " + question)
+        for answer in poll.get("answers") or []:
+            answer_text = (answer.get("poll_media") or {}).get("text") or ""
+            if answer_text:
+                lines.append("  - " + answer_text)
+    reactions = []
+    for reaction in message.get("reactions") or []:
+        emoji = reaction.get("emoji") or {}
+        label = emoji.get("name") or "emoji"
+        reactions.append(f"{label}: {reaction.get('count', 0)}")
+    if reactions:
+        lines.append("Reactions: " + ", ".join(reactions))
+    lines.append(f"Message URL: https://discord.com/channels/{message.get('guild_id') or '@me'}/{message.get('channel_id') or ''}/{message_id}")
+    return "\\n".join(lines)
+
+
+def archive_api_messages(channel_id, params):
+    """Fetch a page with basic Discord rate-limit handling."""
+    while True:
+        response = requests.get(
+            f"{API}/channels/{channel_id}/messages",
+            headers=HEADERS,
+            params=params,
+            timeout=45,
+        )
+        if response.status_code == 429:
+            try:
+                delay = float(response.json().get("retry_after", 2))
+            except (ValueError, TypeError):
+                delay = 2
+            time.sleep(max(1, delay) + 0.25)
+            continue
+        response.raise_for_status()
+        return response.json()
+
+
+def fetch_archive_messages(channel_id, last_id=None):
+    """First run backfills the full accessible history; later runs fetch new messages."""
+    collected = []
+    if last_id:
+        page = archive_api_messages(channel_id, {"after": last_id, "limit": 100})
+        collected.extend(page)
+        if len(page) == 100:
+            oldest = min(int(m["id"]) for m in page)
+            while oldest > int(last_id):
+                page = archive_api_messages(
+                    channel_id, {"before": str(oldest), "limit": 100}
+                )
+                if not page:
+                    break
+                older = [m for m in page if int(m["id"]) > int(last_id)]
+                collected.extend(older)
+                next_oldest = min(int(m["id"]) for m in page)
+                if next_oldest >= oldest:
+                    break
+                oldest = next_oldest
+                if len(page) < 100:
+                    break
+        collected = [m for m in collected if int(m["id"]) > int(last_id)]
+    else:
+        before = None
+        while True:
+            params = {"limit": 100}
+            if before:
+                params["before"] = before
+            page = archive_api_messages(channel_id, params)
+            if not page:
+                break
+            collected.extend(page)
+            next_before = str(min(int(m["id"]) for m in page))
+            if next_before == before or len(page) < 100:
+                break
+            before = next_before
+    unique = {str(m["id"]): m for m in collected}
+    return sorted(unique.values(), key=lambda m: int(m["id"]))
+
+
+def update_complete_archive(channel_list):
+    """Maintain one chronological-per-channel TXT archive, incrementally."""
+    try:
+        state = json.loads(ARCHIVE_STATE_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        state = {}
+    existing = ARCHIVE_FILE.read_text(encoding="utf-8") if ARCHIVE_FILE.exists() else ""
+    additions = []
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    for channel_id in channel_list:
+        last_id = state.get(channel_id)
+        try:
+            messages = fetch_archive_messages(channel_id, last_id)
+            if not messages:
+                print(f"Archive channel {channel_id}: no new messages.")
+                continue
+            channel_name = next(
+                (m.get("channel_id") for m in messages if m.get("channel_id")),
+                channel_id,
+            )
+            additions.append(f"\\n\\n===== CHANNEL {channel_name} | collected {now} =====\\n")
+            additions.append("\\n\\n".join(archive_message_text(m) for m in messages))
+            state[channel_id] = max((str(m["id"]) for m in messages), key=int)
+            print(f"Archive channel {channel_id}: added {len(messages)} message(s).")
+        except Exception as error:
+            print(f"Archive channel {channel_id} failed; cursor unchanged: {error}")
+
+    if additions:
+        ARCHIVE_FILE.write_text(existing + "".join(additions) + "\\n", encoding="utf-8")
+    elif not ARCHIVE_FILE.exists():
+        ARCHIVE_FILE.write_text(
+            "# Discord archive\\n# Includes messages the bot can currently retrieve from configured channels.\\n",
+            encoding="utf-8",
+        )
+    ARCHIVE_STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+
+
 def main():
     me = api("/users/@me")["id"]
     all_groups, seen = [], set()
     per_channel_groups = {}
+
+    update_complete_archive(channel_ids())
 
     for cid in channel_ids():
         # Keep an entry for every configured channel, even if Discord returns
