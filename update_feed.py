@@ -53,6 +53,8 @@ CHANNELS_DIR = Path("channels")
 ANNOUNCEMENT_CHANNELS_FILE = Path("announcement_channels.txt")
 ARCHIVE_FILE = Path("discord-archive.txt")
 ARCHIVE_STATE_FILE = Path("discord-archive-state.json")
+ARCHIVE_CHANNEL_IDS = [CHANNEL_ID]  # Keep the text archive limited to the single main channel.
+ARCHIVE_HIDDEN_AUTHORS = {"farquaad"}
 BLOCKLIST_URL = "https://raw.githubusercontent.com/dsojevic/profanity-list/main/en.txt"
 
 avatar_index = json.loads(AV_INDEX.read_text()) if AV_INDEX.exists() else {}
@@ -435,6 +437,13 @@ def archive_message_text(message):
     """Render a retrieved Discord message without feed combining or censoring."""
     author = message.get("author") or {}
     display = author.get("global_name") or author.get("username") or "Unknown"
+    # Hide Farquaad-authored messages from the public TXT archive.
+    author_names = {
+        str(author.get("global_name") or "").strip().casefold(),
+        str(author.get("username") or "").strip().casefold(),
+    }
+    if author_names & ARCHIVE_HIDDEN_AUTHORS:
+        return None
     stamp = message.get("timestamp") or ""
     message_id = str(message.get("id") or "")
     lines = [f"[{stamp}] {display} (message {message_id})"]
@@ -563,10 +572,19 @@ def update_complete_archive(channel_list):
                 (m.get("channel_id") for m in messages if m.get("channel_id")),
                 channel_id,
             )
-            additions.append(f"\n\n===== CHANNEL {channel_name} | collected {now} =====\n")
-            additions.append("\n\n".join(archive_message_text(m) for m in messages))
+            visible_messages = [
+                rendered for m in messages
+                if (rendered := archive_message_text(m)) is not None
+            ]
+            if visible_messages:
+                additions.append(f"\n\n===== CHANNEL {channel_name} | collected {now} =====\n")
+                additions.append("\n\n".join(visible_messages))
             state[channel_id] = max((str(m["id"]) for m in messages), key=int)
-            print(f"Archive channel {channel_id}: added {len(messages)} message(s).")
+            hidden_count = len(messages) - len(visible_messages)
+            print(
+                f"Archive channel {channel_id}: added {len(visible_messages)} message(s); "
+                f"hidden {hidden_count} Farquaad message(s)."
+            )
         except Exception as error:
             print(f"Archive channel {channel_id} failed; cursor unchanged: {error}")
 
@@ -585,7 +603,7 @@ def main():
     all_groups, seen = [], set()
     per_channel_groups = {}
 
-    update_complete_archive(channel_ids())
+    update_complete_archive(ARCHIVE_CHANNEL_IDS)
 
     for cid in channel_ids():
         # Keep an entry for every configured channel, even if Discord returns
