@@ -28,6 +28,9 @@ FEED_FILE = "vrc-feed.txt"
 MAX_ITEMS = 15            # most announcements kept, newest first
 COMBINE_SECONDS = 300     # same person, same channel, within 5 min, no reactions -> one message
 THUMB_MAX = 512           # pictures are shrunk to at most this many pixels
+GIF_FRAME_CELL = 128       # static GIF spritesheet: 4 x 4 frames
+GIF_MAX_FRAMES = 16
+GIF_GRID = 4
 
 # VRChat atlas: 8 x 8 cells of 256 px = one 2048 x 2048 picture
 WORLD_DIR = Path("world")
@@ -165,10 +168,35 @@ def ensure_avatar(user):
         avatar_index[uid] = h
 
 
+def gif_spritesheet(img):
+    """Turn an animated GIF into one static 4x4 contact sheet for the VRChat atlas."""
+    frame_total = getattr(img, "n_frames", 1)
+    if frame_total <= 1:
+        return None
+
+    # Sample evenly across the animation, keeping the sheet small and predictable.
+    count = min(frame_total, GIF_MAX_FRAMES)
+    indexes = sorted(set(round(i * (frame_total - 1) / max(1, count - 1)) for i in range(count)))
+    sheet = Image.new("RGBA", (GIF_FRAME_CELL * GIF_GRID, GIF_FRAME_CELL * GIF_GRID), (0, 0, 0, 0))
+
+    for slot, frame_index in enumerate(indexes[:GIF_MAX_FRAMES]):
+        img.seek(frame_index)
+        frame = img.convert("RGBA")
+        frame.thumbnail((GIF_FRAME_CELL, GIF_FRAME_CELL), Image.LANCZOS)
+        x = (slot % GIF_GRID) * GIF_FRAME_CELL + (GIF_FRAME_CELL - frame.width) // 2
+        y = (slot // GIF_GRID) * GIF_FRAME_CELL + (GIF_FRAME_CELL - frame.height) // 2
+        sheet.alpha_composite(frame, (x, y))
+
+    return sheet
+
+
 def ensure_thumbnail(url):
     """Save a small copy of the picture. Same link, or the same picture from a different
     link, is only ever stored once."""
     key = url.split("?")[0]
+    # Force GIF URLs through the spritesheet version instead of reusing old first-frame thumbnails.
+    if key.lower().endswith(".gif"):
+        key += "#spritesheet-v1"
     name = thumb_index.get(key)
     if name and (TH_DIR / name).exists():
         return f"{RAW}/thumbnails/{name}"
@@ -176,9 +204,13 @@ def ensure_thumbnail(url):
         r = requests.get(url, timeout=30)
         r.raise_for_status()
         img = Image.open(BytesIO(r.content))
-        img.seek(0)                       # GIFs: first frame only
-        img = img.convert("RGBA")
-        img.thumbnail((THUMB_MAX, THUMB_MAX))
+        sheet = gif_spritesheet(img) if (img.format or "").upper() == "GIF" else None
+        if sheet is not None:
+            img = sheet
+        else:
+            img.seek(0)
+            img = img.convert("RGBA")
+            img.thumbnail((THUMB_MAX, THUMB_MAX))
         has_alpha = img.getchannel("A").getextrema()[0] < 255
         buf = BytesIO()
         if has_alpha:
@@ -203,7 +235,10 @@ def ensure_thumbnail(url):
 def pick_images(m):
     urls = []
     for e in m.get("embeds", []):
-        u = (e.get("thumbnail") or {}).get("url") or (e.get("image") or {}).get("url")
+        image_url = (e.get("image") or {}).get("url")
+        thumbnail_url = (e.get("thumbnail") or {}).get("url")
+        # Prefer the actual GIF over Discord's still thumbnail when both are present.
+        u = image_url if image_url and image_url.split("?")[0].lower().endswith(".gif") else (thumbnail_url or image_url)
         if u and u not in urls:
             urls.append(u)
     for a in m.get("attachments", []):
